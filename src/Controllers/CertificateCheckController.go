@@ -3,10 +3,7 @@ package controllers
 import (
 	"../Helpers/X509"
 	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"time"
@@ -15,13 +12,7 @@ import (
 func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request) {
 	log.Printf("START at " + time.Now().String())
 
-	certificatePemData, err := readCertificateFromBody(request)
-	if err != nil {
-		writeResponse(400, err.Error(), responseWriter)
-		return
-	}
-
-	certificate, err := parseCertificatePEMData(certificatePemData)
+	certificate, err := helpers.ReadCertificateFromRequest(request)
 	if err != nil {
 		writeResponse(400, err.Error(), responseWriter)
 		return
@@ -30,29 +21,26 @@ func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request)
 	abortChannel := make(chan bool)
 	defer close(abortChannel)
 
-	checkCertificateChannel := make(chan bool)
-	defer close(checkCertificateChannel)
-	getParentCertificateChannel := make(chan string)
-	defer close(getParentCertificateChannel)
+	verifyCertificateChainChannel := make(chan string)
+	defer close(verifyCertificateChainChannel)
+	buildTrustChainChannel := make(chan []*x509.Certificate)
+	defer close(buildTrustChainChannel)
 
-	go helpers.CheckCertificate(checkCertificateChannel, certificate)
-	go helpers.FetchCertificateFromUrl(getParentCertificateChannel, abortChannel, certificate)
+	go helpers.BuildTrustChain(buildTrustChainChannel, abortChannel, certificate)
 
-	certificateIsValid := <-checkCertificateChannel
-	if !certificateIsValid {
-		log.Printf("ABORT Certificate not valid!")
-		abortChannel <- true
-		log.Printf("END at " + time.Now().String())
-		writeResponse(400, "certificate is not valid", responseWriter)
-		return
-	}
-
-	parentCertificate := <-getParentCertificateChannel
-	if parentCertificate == "" {
+	trustChain := <-buildTrustChainChannel
+	if len(trustChain) == 1 {
 		log.Printf("No parent certificate found. So this is the root certificate. ")
 	}
 
-	abortChannel <- true
+	go helpers.VerifyTrustChain(verifyCertificateChainChannel, trustChain)
+	certificateChainErrorMessage := <-verifyCertificateChainChannel
+	if certificateChainErrorMessage != "" {
+		log.Printf("ABORT Certificate not valid!")
+		log.Printf("END at " + time.Now().String())
+		writeResponse(400, certificateChainErrorMessage, responseWriter)
+		return
+	}
 
 	fmt.Fprintf(responseWriter, "Certificate OK ")
 }
@@ -60,29 +48,4 @@ func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request)
 func writeResponse(statusCode int, message string, responseWriter http.ResponseWriter) {
 	responseWriter.WriteHeader(statusCode)
 	fmt.Fprintf(responseWriter, message)
-}
-
-func readCertificateFromBody(request *http.Request) (certificatePEMData []byte, err error) {
-	certificatePemData, err := ioutil.ReadAll(request.Body)
-
-	if err != nil || len(certificatePemData) == 0 {
-		return nil, errors.New("Invalid body provided")
-	}
-
-	return certificatePemData, nil
-}
-
-func parseCertificatePEMData(certificatePemData []byte) (certificate *x509.Certificate, err error) {
-	block, _ := pem.Decode(certificatePemData)
-	if block == nil {
-		return nil, errors.New("Invalid block")
-	}
-
-	certificate, err = x509.ParseCertificate(block.Bytes)
-
-	if err != nil || certificate == nil {
-		return nil, errors.New("Could not parse the certificate")
-	}
-
-	return certificate, nil
 }

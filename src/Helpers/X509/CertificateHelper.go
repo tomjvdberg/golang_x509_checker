@@ -2,8 +2,11 @@ package helpers
 
 import (
 	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"io/ioutil"
 	"log"
-	"time"
+	"net/http"
 )
 
 const rootPEM = `
@@ -71,52 +74,116 @@ qv4a19E97jCVv/to50FaUz5uoQWzAQDMmA3jcQU7TGVYYNFBtYL5PSUoF6tzo88g
 jbhYDECcGLPKm+8Ll5DXHkl6uh4GCjLPWb+s1c1vJzLA1nMH8aKSo+Iq
 -----END CERTIFICATE-----`
 
-func FetchCertificateFromUrl(channel chan string, abortChannel <-chan bool, certificate *x509.Certificate) {
-	log.Printf("Fetching parent certificate")
-	// TODO fetch the certificate
-	time.Sleep(2 * time.Second) // act a slow retrieval of the parent certificate
+func BuildTrustChain(channel chan []*x509.Certificate, abortChannel <-chan bool, certificate *x509.Certificate) {
+	log.Printf("Building trust chain")
+	trustChain := []*x509.Certificate{}
+	trustChain = append(trustChain, certificate)
+
+	// TODO loop while parentURL is not NULL
+	parentUrl := certificate.IssuingCertificateURL
+	if len(parentUrl) > 0 && len(parentUrl[0]) > 0 {
+		log.Print(parentUrl[0])
+		resp, err := http.Get(parentUrl[0])
+
+		if resp != nil {
+			defer resp.Body.Close()
+			body, err := ioutil.ReadAll(resp.Body)
+
+			if err != nil {
+				log.Printf(err.Error())
+			}
+
+			newCert, err := x509.ParseCertificate(body)
+
+			if err != nil {
+				log.Printf(err.Error())
+			}
+
+			trustChain = append(trustChain, newCert)
+		}
+
+		if err != nil {
+			log.Printf(err.Error())
+		}
+
+	} else {
+		log.Printf("No parent certificate URL found")
+	}
 
 	select {
 	case <-abortChannel:
-		log.Printf("Fetching stub parent certificate ABORTED!")
+		log.Printf("Fetching parent certificate ABORTED!")
 		return
-
 	default:
-		log.Printf("Fetched the stub parent certificate")
-		channel <- ""
+		channel <- trustChain
 	}
 }
 
-func CheckCertificate(channel chan bool, certificate *x509.Certificate) {
-	log.Printf("Checking certificate")
+func VerifyTrustChain(channel chan string, trustChain []*x509.Certificate) {
+	rootCertificates := x509.NewCertPool()
+	intermediateCertificates := x509.NewCertPool()
 
-	roots := x509.NewCertPool()
-	ok := roots.AppendCertsFromPEM([]byte(rootPEM))
-	if !ok {
-		log.Printf("failed to parse root certificate")
-		channel <- false
-		return
+	log.Printf("Checking certificate")
+	log.Print(trustChain)
+	subjectCertificate := trustChain[0] // the first cert is the subject
+
+	myCa, _ := ParseCertificatePEMData([]byte(rootPEM))
+	rootCertificates.AddCert(myCa) // add you CA's
+	rootCertificates.AddCert(myCa) // add you CA's
+
+	myCaIntermediate, _ := ParseCertificatePEMData([]byte(intermediatePEM))
+	intermediateCertificates.AddCert(myCa)             // add you CA's intermediates
+	intermediateCertificates.AddCert(myCaIntermediate) // add you CA's intermediates
+	//intermediateCertificates.AddCert(myCaIntermediate) // add you CA's intermediates
+
+	if len(trustChain) > 1 {
+		rootCertificates.AddCert(trustChain[len(trustChain)-1]) // the last cert is the root. This may be the same cert
 	}
 
-	//intermediates := x509.NewCertPool()
-	//ok = intermediates.AppendCertsFromPEM([]byte(intermediatePEM))
-	//if !ok {
-	//	log.Printf("failed to parse intermediate certificate")
-	//	channel <- false
-	//	return
-	//}
+	if len(trustChain) > 2 {
+		for _, intermediateCertificate := range trustChain[1 : len(trustChain)-2] {
+			intermediateCertificates.AddCert(intermediateCertificate)
+		}
+	}
 
 	verifyOptions := x509.VerifyOptions{
-		Roots: roots,
-		//Intermediates: intermediates,
+		Roots:         rootCertificates,
+		Intermediates: intermediateCertificates,
 	}
-	_, err := certificate.Verify(verifyOptions)
+	_, err := subjectCertificate.Verify(verifyOptions)
 
 	if err != nil {
 		log.Printf(err.Error())
-		channel <- true // TODO should be false
+		channel <- err.Error()
 		return
 	}
 
-	channel <- true // return if the certificate is found to be valid
+	channel <- "" // return if the certificate is found to be valid
+}
+
+func ReadCertificateFromRequest(request *http.Request) (certificate *x509.Certificate, err error) {
+	certificatePemData, err := ioutil.ReadAll(request.Body)
+
+	if err != nil || len(certificatePemData) == 0 {
+		return nil, errors.New("Invalid body provided")
+	}
+
+	certificate, err = ParseCertificatePEMData(certificatePemData)
+
+	return certificate, err
+}
+
+func ParseCertificatePEMData(certificatePemData []byte) (certificate *x509.Certificate, err error) {
+	block, _ := pem.Decode(certificatePemData)
+	if block == nil {
+		return nil, errors.New("Invalid block")
+	}
+
+	certificate, err = x509.ParseCertificate(block.Bytes)
+
+	if err != nil || certificate == nil {
+		return nil, errors.New("Could not parse the certificate")
+	}
+
+	return certificate, nil
 }

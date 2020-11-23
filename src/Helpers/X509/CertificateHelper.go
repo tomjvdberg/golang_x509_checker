@@ -79,35 +79,33 @@ func BuildTrustChain(channel chan []*x509.Certificate, abortChannel <-chan bool,
 	trustChain := []*x509.Certificate{}
 	trustChain = append(trustChain, certificate)
 
-	// TODO loop while parentURL is not NULL
 	parentUrl := certificate.IssuingCertificateURL
-	if len(parentUrl) > 0 && len(parentUrl[0]) > 0 {
-		log.Print(parentUrl[0])
-		resp, err := http.Get(parentUrl[0])
+	maxLoops := 5 // TODO make constant
+	loopCounter := 0
+	for {
+		if len(parentUrl) == 0 || len(parentUrl[0]) == 0 {
+			log.Printf("No parent certificate URL found")
+			break
+		}
 
-		if resp != nil {
-			defer resp.Body.Close()
-			body, err := ioutil.ReadAll(resp.Body)
-
-			if err != nil {
-				log.Printf(err.Error())
-			}
-
-			newCert, err := x509.ParseCertificate(body)
-
-			if err != nil {
-				log.Printf(err.Error())
-			}
-
+		newCert, err := getCertificateFromUrl(parentUrl[0])
+		if err == nil {
+			log.Printf("Adding retrieved parent certificate.")
 			trustChain = append(trustChain, newCert)
 		}
 
-		if err != nil {
-			log.Printf(err.Error())
+		if newCert == nil {
+			log.Printf("No certificate found? ??")
+			break
 		}
 
-	} else {
-		log.Printf("No parent certificate URL found")
+		if loopCounter > maxLoops {
+			log.Printf("Maximum length of trustchain reached. Breaking.")
+			break
+		}
+
+		parentUrl = newCert.IssuingCertificateURL
+		loopCounter++
 	}
 
 	select {
@@ -119,26 +117,41 @@ func BuildTrustChain(channel chan []*x509.Certificate, abortChannel <-chan bool,
 	}
 }
 
+func getCertificateFromUrl(certificateUrl string) (certificate *x509.Certificate, err error) {
+	resp, err := http.Get(certificateUrl)
+
+	if resp != nil {
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf(err.Error())
+		}
+
+		newCert, err := x509.ParseCertificate(body)
+		if err != nil {
+			log.Printf(err.Error())
+		}
+
+		return newCert, err
+	}
+
+	if err != nil {
+		log.Printf(err.Error())
+	}
+
+	return nil, err
+}
+
 func VerifyTrustChain(channel chan string, trustChain []*x509.Certificate) {
 	rootCertificates := x509.NewCertPool()
 	intermediateCertificates := x509.NewCertPool()
 
 	log.Printf("Checking certificate")
-	log.Print(trustChain)
 	subjectCertificate := trustChain[0] // the first cert is the subject
 
+	/* Add your CA's as root authority*/
 	myCa, _ := ParseCertificatePEMData([]byte(rootPEM))
-	rootCertificates.AddCert(myCa) // add you CA's
-	rootCertificates.AddCert(myCa) // add you CA's
-
-	myCaIntermediate, _ := ParseCertificatePEMData([]byte(intermediatePEM))
-	intermediateCertificates.AddCert(myCa)             // add you CA's intermediates
-	intermediateCertificates.AddCert(myCaIntermediate) // add you CA's intermediates
-	//intermediateCertificates.AddCert(myCaIntermediate) // add you CA's intermediates
-
-	if len(trustChain) > 1 {
-		rootCertificates.AddCert(trustChain[len(trustChain)-1]) // the last cert is the root. This may be the same cert
-	}
+	rootCertificates.AddCert(myCa) // add your CA's
 
 	if len(trustChain) > 2 {
 		for _, intermediateCertificate := range trustChain[1 : len(trustChain)-2] {
@@ -147,8 +160,8 @@ func VerifyTrustChain(channel chan string, trustChain []*x509.Certificate) {
 	}
 
 	verifyOptions := x509.VerifyOptions{
-		Roots:         rootCertificates,
-		Intermediates: intermediateCertificates,
+		Roots:         rootCertificates,         // The CA's
+		Intermediates: intermediateCertificates, // all parent certificates from the subject certificate
 	}
 	_, err := subjectCertificate.Verify(verifyOptions)
 

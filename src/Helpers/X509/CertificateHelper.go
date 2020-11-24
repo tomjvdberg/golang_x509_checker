@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 )
 
 const rootPEM = `
@@ -45,36 +46,11 @@ p6/elBropbRK1hdl/2L0C3nRRNTuEg4vtW4KZkQPdCRSrqbCpZegOMz1/fr2QEUq
 LwcjiBr0Kg==
 -----END CERTIFICATE-----`
 
-const intermediatePEM = `
------BEGIN CERTIFICATE-----
-MIIEpjCCAo4CFALq9QbNuDYz17bCNbICotVICss3MA0GCSqGSIb3DQEBCwUAMHkx
-CzAJBgNVBAYTAk5MMRAwDgYDVQQIDAdVdHJlY2h0MQ4wDAYDVQQHDAVEb29ybjEP
-MA0GA1UECgwGU3l2ZW50MRIwEAYDVQQDDAlzeXZlbnQubmwxIzAhBgkqhkiG9w0B
-CQEWFHZhbmRlbmJlcmdAc3l2ZW50Lm5sMB4XDTIwMTEyMDA4MDM0OFoXDTIyMDQw
-NDA4MDM0OFowgaUxCzAJBgNVBAYTAk5MMRAwDgYDVQQIDAdVdHJlY2h0MRAwDgYD
-VQQHDAdMZWVyc3VtMSEwHwYDVQQKDBhJbnRlcm1lZGlhdGUgZnJvbSBTeXZlbnQx
-ETAPBgNVBAsMCFNlY3VyaXR5MRUwEwYDVQQDDAxJbnRlcm1lZGlhdGUxJTAjBgkq
-hkiG9w0BCQEWFmludGVybWVkaWF0ZUBzeXZlbnQubmwwggEiMA0GCSqGSIb3DQEB
-AQUAA4IBDwAwggEKAoIBAQCsEp2Zy9+KxsGbzxpziYwFB+J9fFhFnl/K5sVRCTSI
-8o01UrL16Cwib2Ogi7fDCDZY69AGHOXae/Cc9FhQMhQqTHmGBJ9GsePj1defWrNL
-qJjqqrWU0LtuMfkPLvQZBa1KSAvKc2x3KHB02EMnxSQ5G3sOpcsM+0u/t8InEH30
-lO9kDAflrOEsGJRlHqvq5OxopOJMrQtrfmiKu0wvEppFhvg6lyKSW309aLMgtIf+
-F3J5Bsr2sIeUesNVNM75XllCKJyOAq3IpkXPObu70bc1AnPUPE+t8PuNl3bKVsb1
-EL7RcjjjcWn2R5r81WTWrpsLwLoYhMnEna7i8jB59hQxAgMBAAEwDQYJKoZIhvcN
-AQELBQADggIBAI7hSJmWfqFP2/5rMSSTfLbpDne/M0LlN28ThieUW9jt3/ydvkD9
-r9vp12uCkjxNmLZXoTgxqW9hsOfQ0ZL3HYh6OV0KIGBigVouDYArhJXboiTlW5Hk
-x+sCYR1LDzocTs1Inu85+fWUDrRlN5AlUdqrSRlzJSLLKdbqkUMh0uxRrM4qzCZN
-lKDu8BO3qJ/8oOAvqQeteJniGtvrUVH0962/Hf6HE5vskNyCRDFwxdignz5eFziY
-UyHnUyS6eXpZRW/7PzSYPN73MUrrvuU12JMDvc69yI6Lw7N2Qa5R5v/z/8jIz1VH
-wVjK6HvX+bsSxuBbwLeS13BfmUWmc1oyd66+J1iPIeN194t92C/igq2mgJJyNHHb
-LgJ64xURLGt6PgqHbsTkEVKGeq/JQ/Q1LeRpCknv5P8c/QaudHo0Pi1xUpIU4GLr
-ApkOZXk2nyyQ3F+13RgcBQOZXzI2PIsohy5RVayxZqr5oLbLBkcZv0o8YkDnCuaH
-vF8e6cwL2s1vhDWRJAvnF13/t51Ux/eWtRDqFzKMkFGzq9tmHmoKwEQV24mCZqZa
-qv4a19E97jCVv/to50FaUz5uoQWzAQDMmA3jcQU7TGVYYNFBtYL5PSUoF6tzo88g
-jbhYDECcGLPKm+8Ll5DXHkl6uh4GCjLPWb+s1c1vJzLA1nMH8aKSo+Iq
------END CERTIFICATE-----`
+func BuildTrustChain(
+	channel chan []*x509.Certificate,
+	certificate *x509.Certificate,
+) {
 
-func BuildTrustChain(channel chan []*x509.Certificate, abortChannel <-chan bool, certificate *x509.Certificate) {
 	log.Printf("Building trust chain")
 	trustChain := []*x509.Certificate{}
 	trustChain = append(trustChain, certificate)
@@ -108,13 +84,61 @@ func BuildTrustChain(channel chan []*x509.Certificate, abortChannel <-chan bool,
 		loopCounter++
 	}
 
-	select {
-	case <-abortChannel:
-		log.Printf("Fetching parent certificate ABORTED!")
+	channel <- trustChain
+}
+
+func VerifyTrustChain(
+	channel chan string,
+	trustChain []*x509.Certificate,
+	certsFromPEM []byte,
+	verificationReferenceTime time.Time,
+) {
+	rootCertificates := x509.NewCertPool()
+	intermediateCertificates := x509.NewCertPool()
+
+	log.Printf("Verifying trust chain")
+	subjectCertificate := trustChain[0] // the first cert is the subject
+
+	/* Add your CA's as root authority*/
+	ok := rootCertificates.AppendCertsFromPEM(certsFromPEM) // add your CA's
+	if !ok {
+		channel <- "error appending roots from PEM"
 		return
-	default:
-		channel <- trustChain
 	}
+
+	if len(trustChain) > 1 {
+		for _, intermediateCertificate := range trustChain[1:] {
+			intermediateCertificates.AddCert(intermediateCertificate)
+		}
+	}
+
+	verifyOptions := x509.VerifyOptions{
+		Roots:         rootCertificates,         // The CA's
+		Intermediates: intermediateCertificates, // all parent certificates from the subject certificate
+		// set a time to verify in the past
+		CurrentTime: verificationReferenceTime,
+	}
+	_, err := subjectCertificate.Verify(verifyOptions)
+	if err != nil {
+		log.Printf(err.Error())
+		channel <- err.Error()
+		return
+	}
+
+	// TODO return error or nil instead of error message
+	channel <- "" // return if the certificate is found to be valid
+}
+
+func ReadCertificateFromRequest(request *http.Request) (certificate *x509.Certificate, err error) {
+	certificatePemData, err := ioutil.ReadAll(request.Body)
+
+	if err != nil || len(certificatePemData) == 0 {
+		return nil, errors.New("Invalid body provided")
+	}
+
+	certificate, err = parseCertificatePEMData(certificatePemData)
+
+	return certificate, err
 }
 
 func getCertificateFromUrl(certificateUrl string) (certificate *x509.Certificate, err error) {
@@ -142,56 +166,16 @@ func getCertificateFromUrl(certificateUrl string) (certificate *x509.Certificate
 	return nil, err
 }
 
-func VerifyTrustChain(channel chan string, trustChain []*x509.Certificate) {
-	rootCertificates := x509.NewCertPool()
-	intermediateCertificates := x509.NewCertPool()
-
-	log.Printf("Checking certificate")
-	subjectCertificate := trustChain[0] // the first cert is the subject
-
-	/* Add your CA's as root authority*/
-	myCa, _ := ParseCertificatePEMData([]byte(rootPEM))
-	rootCertificates.AddCert(myCa) // add your CA's
-
-	if len(trustChain) > 2 {
-		for _, intermediateCertificate := range trustChain[1 : len(trustChain)-2] {
-			intermediateCertificates.AddCert(intermediateCertificate)
-		}
-	}
-
-	verifyOptions := x509.VerifyOptions{
-		Roots:         rootCertificates,         // The CA's
-		Intermediates: intermediateCertificates, // all parent certificates from the subject certificate
-	}
-	_, err := subjectCertificate.Verify(verifyOptions)
-
-	if err != nil {
-		log.Printf(err.Error())
-		channel <- err.Error()
-		return
-	}
-
-	channel <- "" // return if the certificate is found to be valid
-}
-
-func ReadCertificateFromRequest(request *http.Request) (certificate *x509.Certificate, err error) {
-	certificatePemData, err := ioutil.ReadAll(request.Body)
-
-	if err != nil || len(certificatePemData) == 0 {
-		return nil, errors.New("Invalid body provided")
-	}
-
-	certificate, err = ParseCertificatePEMData(certificatePemData)
-
-	return certificate, err
-}
-
-func ParseCertificatePEMData(certificatePemData []byte) (certificate *x509.Certificate, err error) {
+func parseCertificatePEMData(certificatePemData []byte) (certificate *x509.Certificate, err error) {
 	block, _ := pem.Decode(certificatePemData)
 	if block == nil {
 		return nil, errors.New("Invalid block")
 	}
 
+	return blockToCertificate(block)
+}
+
+func blockToCertificate(block *pem.Block) (certificate *x509.Certificate, err error) {
 	certificate, err = x509.ParseCertificate(block.Bytes)
 
 	if err != nil || certificate == nil {

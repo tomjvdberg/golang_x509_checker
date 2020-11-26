@@ -1,0 +1,9 @@
+version: '3.1'
+
+services:
+    go_micro_production:
+        image: syvent/go_micro:latest
+        ports:
+            - 8080:8080
+        labels:
+            - "domains=certificate-check.local"

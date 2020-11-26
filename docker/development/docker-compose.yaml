@@ -3,11 +3,10 @@ version: '3.1'
 services:
     go_micro:
         build:
-            context: app
+            context: .
             dockerfile: Dockerfile
         volumes:
-            - ../src:/go_micro/src
-            - ../src:/go_micro/bin
+            - ../../internal:/go_micro
         working_dir: /go_micro
         labels:
             - "domains=certificate-check.local"

@@ -10,9 +10,7 @@ RUN groupadd --gid $local_user_group_id host && \
 # Always change user to host
 RUN echo 'su host' > /root/.bashrc
 
-COPY ./entry_point.sh /entry_point.sh
-RUN chmod +x /entry_point.sh
-
 RUN go get github.com/loov/watchrun
 
-ENTRYPOINT sh /entry_point.sh
+ENTRYPOINT tail -f /dev/null
+

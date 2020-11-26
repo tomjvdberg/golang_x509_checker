@@ -6,8 +6,17 @@ services:
             context: app
             dockerfile: Dockerfile
         volumes:
-            - ../:/go_micro
+            - ../src:/go_micro/src
+            - ../src:/go_micro/bin
         working_dir: /go_micro
         labels:
             - "domains=certificate-check.local"
 
+    vva-docker-hoster:
+        container_name: 'docker-hoster-go_micro'
+        build:
+            context: docker-hoster
+            dockerfile: Dockerfile
+        volumes:
+            - /var/run/docker.sock:/tmp/docker.sock
+            - /etc/hosts:/tmp/hosts

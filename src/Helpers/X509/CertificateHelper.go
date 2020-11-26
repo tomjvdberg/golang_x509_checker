@@ -52,7 +52,7 @@ func BuildTrustChain(
 }
 
 func VerifyTrustChain(
-	channel chan string,
+	channel chan error,
 	trustChain []*x509.Certificate,
 	certsFromPEM []byte,
 	verificationReferenceTime time.Time,
@@ -63,10 +63,10 @@ func VerifyTrustChain(
 	log.Printf("Verifying trust chain")
 	subjectCertificate := trustChain[0] // the first cert is the subject
 
-	/* Add your CA's as root authority*/
+	// Add your CA's as root authority
 	ok := rootCertificates.AppendCertsFromPEM(certsFromPEM) // add your CA's
 	if !ok {
-		channel <- "error appending roots from PEM"
+		channel <- errors.New("error appending roots from PEM")
 		return
 	}
 
@@ -79,18 +79,17 @@ func VerifyTrustChain(
 	verifyOptions := x509.VerifyOptions{
 		Roots:         rootCertificates,         // The CA's
 		Intermediates: intermediateCertificates, // all parent certificates from the subject certificate
-		// set a time to verify in the past
+		// allows to verify is a certificate was valid in the past
 		CurrentTime: verificationReferenceTime,
 	}
+
 	_, err := subjectCertificate.Verify(verifyOptions)
 	if err != nil {
-		log.Printf(err.Error())
-		channel <- err.Error()
+		channel <- err
 		return
 	}
 
-	// TODO return error or nil instead of error message
-	channel <- "" // return if the certificate is found to be valid
+	channel <- nil // no error found. Certificate is valid.
 }
 
 func ReadCertificateFromRequest(request *http.Request) (certificate *x509.Certificate, err error) {

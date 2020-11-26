@@ -4,11 +4,10 @@ import (
 	"../Helpers/X509"
 	"crypto/x509"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -19,30 +18,19 @@ type CertificateCheckRequest struct {
 }
 
 func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request) {
-	log.Printf("START at " + strconv.Itoa(int(time.Now().UnixNano())))
-
-	var certificateRequest CertificateCheckRequest
-
-	requestJson, err := ioutil.ReadAll(request.Body)
-	if err != nil || len(requestJson) == 0 {
-		writeResponse(400, "Invalid body provided", responseWriter)
-		return
-	}
-
-	err = json.Unmarshal(requestJson, &certificateRequest)
+	certificateRequest, err := parseRequestToJson(request)
 	if err != nil {
-		log.Printf("Json format error")
-		writeResponse(400, err.Error(), responseWriter)
+		http.Error(responseWriter, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	certificate, err := helpers.ParseCertificatePEMData([]byte(certificateRequest.SubjectCertificate))
 	if err != nil {
-		writeResponse(400, err.Error(), responseWriter)
+		http.Error(responseWriter, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	verifyCertificateChainChannel := make(chan string)
+	verifyCertificateChainChannel := make(chan error)
 	buildTrustChainChannel := make(chan []*x509.Certificate)
 
 	defer close(verifyCertificateChainChannel)
@@ -60,19 +48,25 @@ func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request)
 		[]byte(certificateRequest.Truststore),
 		certificateRequest.ReferenceTime,
 	)
-	certificateChainErrorMessage := <-verifyCertificateChainChannel
-	if certificateChainErrorMessage != "" {
-		log.Printf("ABORT Certificate not valid!")
-		log.Printf("END at " + strconv.Itoa(int(time.Now().UnixNano())))
-		writeResponse(400, certificateChainErrorMessage, responseWriter)
+	certificateChainError := <-verifyCertificateChainChannel
+	if certificateChainError != nil {
+		http.Error(responseWriter, certificateChainError.Error(), http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("END at " + strconv.Itoa(int(time.Now().UnixNano())))
-	fmt.Fprintf(responseWriter, "Certificate OK ")
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
-func writeResponse(statusCode int, message string, responseWriter http.ResponseWriter) {
-	responseWriter.WriteHeader(statusCode)
-	fmt.Fprintf(responseWriter, message)
+func parseRequestToJson(request *http.Request) (certificateCheckRequest CertificateCheckRequest, err error) {
+	requestJson, err := ioutil.ReadAll(request.Body)
+	if err != nil || len(requestJson) == 0 {
+		return certificateCheckRequest, errors.New("invalid body provided")
+	}
+
+	err = json.Unmarshal(requestJson, &certificateCheckRequest)
+	if err != nil {
+		return certificateCheckRequest, errors.New("JSON format error: " + err.Error())
+	}
+
+	return certificateCheckRequest, err
 }

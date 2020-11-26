@@ -1,11 +1,14 @@
 # start the dev server
 dev:
+	make image
 	docker-compose -f docker/development/docker-compose.yaml up -d && \
     docker-compose -f docker/development/docker-compose.yaml exec go_micro bash start.sh && \
-    docker-compose -f docker/development/docker-compose.yaml exec go_micro bash start.sh
+    docker-compose -f docker/development/docker-compose.yaml exec go_micro bash
 
 # open terminal in container
 console:
+	make image
+	docker-compose -f docker/development/docker-compose.yaml up -d && \
 	docker-compose -f docker/development/docker-compose.yaml exec go_micro bash
 
 # stop running containers

@@ -1,4 +1,4 @@
-FROM golang
+FROM syvent/go_micro:latest
 MAINTAINER Tom van den Berg
 
 ARG local_user_id=1000
@@ -12,5 +12,4 @@ RUN echo 'su host' > /root/.bashrc
 
 RUN go get github.com/loov/watchrun
 
-ENTRYPOINT tail -f /dev/null
 

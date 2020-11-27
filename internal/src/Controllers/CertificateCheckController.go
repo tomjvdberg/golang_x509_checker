@@ -37,6 +37,7 @@ func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request)
 	defer close(buildTrustChainChannel)
 
 	go helpers.BuildTrustChain(buildTrustChainChannel, certificate)
+
 	trustChain := <-buildTrustChainChannel
 	if len(trustChain) == 1 {
 		log.Printf("No parent certificate found. So this is the root certificate. ")
@@ -58,6 +59,7 @@ func CertificateCheck(responseWriter http.ResponseWriter, request *http.Request)
 }
 
 func parseRequestToJson(request *http.Request) (certificateCheckRequest CertificateCheckRequest, err error) {
+	defer request.Body.Close()
 	requestJson, err := ioutil.ReadAll(request.Body)
 	if err != nil || len(requestJson) == 0 {
 		return certificateCheckRequest, errors.New("invalid body provided")

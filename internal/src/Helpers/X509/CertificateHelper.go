@@ -10,17 +10,17 @@ import (
 	"time"
 )
 
+const maxStepsToRootCertificate = 5
+
 func BuildTrustChain(
 	channel chan []*x509.Certificate,
 	certificate *x509.Certificate,
 ) {
-
 	log.Printf("Building trust chain")
 	trustChain := []*x509.Certificate{}
 	trustChain = append(trustChain, certificate)
 
 	parentUrl := certificate.IssuingCertificateURL
-	maxLoops := 5 // TODO make constant
 	loopCounter := 0
 	for {
 		if len(parentUrl) == 0 || len(parentUrl[0]) == 0 {
@@ -28,7 +28,13 @@ func BuildTrustChain(
 			break
 		}
 
-		newCert, err := getCertificateFromUrl(parentUrl[0])
+		certificateData, err := fetchCertificateDataFromUrl(parentUrl[0])
+		if err != nil {
+			log.Printf(err.Error())
+			break
+		}
+
+		newCert, err := x509.ParseCertificate(certificateData)
 		if err == nil {
 			log.Printf("Adding retrieved parent certificate.")
 			trustChain = append(trustChain, newCert)
@@ -39,7 +45,7 @@ func BuildTrustChain(
 			break
 		}
 
-		if loopCounter > maxLoops {
+		if loopCounter >= maxStepsToRootCertificate {
 			log.Printf("Maximum length of trustchain reached. Breaking.")
 			break
 		}
@@ -92,19 +98,7 @@ func VerifyTrustChain(
 	channel <- nil // no error found. Certificate is valid.
 }
 
-func ReadCertificateFromRequest(request *http.Request) (certificate *x509.Certificate, err error) {
-	certificatePemData, err := ioutil.ReadAll(request.Body)
-
-	if err != nil || len(certificatePemData) == 0 {
-		return nil, errors.New("Invalid body provided")
-	}
-
-	certificate, err = ParseCertificatePEMData(certificatePemData)
-
-	return certificate, err
-}
-
-func getCertificateFromUrl(certificateUrl string) (certificate *x509.Certificate, err error) {
+func fetchCertificateDataFromUrl(certificateUrl string) ([]byte, error) {
 	resp, err := http.Get(certificateUrl)
 
 	if resp != nil {
@@ -112,18 +106,10 @@ func getCertificateFromUrl(certificateUrl string) (certificate *x509.Certificate
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf(err.Error())
+			return nil, err
 		}
 
-		newCert, err := x509.ParseCertificate(body)
-		if err != nil {
-			log.Printf(err.Error())
-		}
-
-		return newCert, err
-	}
-
-	if err != nil {
-		log.Printf(err.Error())
+		return body, err
 	}
 
 	return nil, err

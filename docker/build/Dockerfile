@@ -1,9 +1,4 @@
-FROM golang
-MAINTAINER Tom van den Berg
-
-COPY internal /go_micro
-
-WORKDIR /go_micro
+FROM syvent/go_micro:base
 
 # Build from source
 RUN go build -o go_micro_server /go_micro/src/main.go
